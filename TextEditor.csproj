@@ -105,6 +105,7 @@
     <Compile Include="MyEditor.xaml.cs">
       <DependentUpon>MyEditor.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Parser.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

@@ -10,7 +10,6 @@ using Windows.UI.Xaml.Input;
 
 using System.Diagnostics;
 using Windows.UI;
-using Windows.UI.Text.Core;
 using Microsoft.Graphics.Canvas.Text;
 using Windows.ApplicationModel.Core;
 using Windows.UI.Core;
@@ -19,6 +18,7 @@ using Windows.System;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.UI.Input;
 using System.Collections;
+using System.Net;
 
 
 // The User Control item template is documented at http://go.microsoft.com/fwlink/?LinkId=234236
@@ -86,6 +86,9 @@ namespace MyEdit {
         Stack<TDiff> UndoStack = new Stack<TDiff>();
         Stack<TDiff> RedoStack = new Stack<TDiff>();
 
+        // 字句解析
+        TParser Parser = new TParser();
+
         /*
             テキスト選択の開始位置
         */
@@ -113,7 +116,7 @@ namespace MyEdit {
 
             // フォントを変更する場合は以下のコメントをはずしてください。
             //TextFormat.FontSize = 48;
-            //TextFormat.FontFamily = "ＭＳ ゴシック";
+            TextFormat.FontFamily = "ＭＳ ゴシック";
         }
 
         /*
@@ -207,10 +210,11 @@ namespace MyEdit {
                     StringWriter sw = new StringWriter();
 
                     UnderlineType under_line = Chars[pos].Underline;
+                    ETokenType token_type = Chars[pos].CharType;
                     bool selected = (sel_start <= pos && pos < sel_end);
 
                     int phrase_start_pos = pos;
-                    for (; pos < Chars.Count && Chars[pos].Chr != LF && Chars[pos].Underline == under_line && (sel_start <= pos && pos < sel_end) == selected; pos++) {
+                    for (; pos < Chars.Count && Chars[pos].Chr != LF && Chars[pos].Underline == under_line && Chars[pos].CharType == token_type && (sel_start <= pos && pos < sel_end) == selected; pos++) {
                         sw.Write(Chars[pos].Chr);
                     }
                     //String str = new string((from c in Chars select c.Chr).ToArray());
@@ -228,11 +232,16 @@ namespace MyEdit {
                         args.DrawingSession.DrawText(str, x, y, Colors.White, TextFormat);
                     }
                     else {
-                        args.DrawingSession.DrawText(str, x, y, Colors.Black, TextFormat);
+
+                        args.DrawingSession.DrawText(str, x, y, ColorFromTokenType(token_type), TextFormat);
 
                         switch (under_line) {
                         case UnderlineType.None:
                         case UnderlineType.Undefined:
+                            if(token_type == ETokenType.Error) {
+
+                                args.DrawingSession.DrawLine(x, yb, xe, yb, Colors.Red, 1);
+                            }
                             break;
 
                         case UnderlineType.Wave:
@@ -339,24 +348,11 @@ namespace MyEdit {
             // 変更情報をポップします。
             TDiff src_diff = src_stack.Pop();
 
-            // 今回の変更情報を作ります。
-            TDiff dst_diff = new TDiff(src_diff.DiffPos, src_diff.InsertedCount, src_diff.RemovedChars.Length);
+            // 削除された文字列
+            string removed_string = new string((from x in src_diff.RemovedChars select x.Chr).ToArray());
 
-            // 削除する文字列をコピーします。
-            Chars.CopyTo(src_diff.DiffPos, dst_diff.RemovedChars, 0, src_diff.InsertedCount);
-
-            // 文字列を削除します。
-            Chars.RemoveRange(src_diff.DiffPos, src_diff.InsertedCount);
-
-            // 新しい文字列を挿入します。
-            Chars.InsertRange(src_diff.DiffPos, src_diff.RemovedChars);
-
-            // 今回の変更情報をプッシュします。
-            dst_stack.Push(dst_diff);
-
-            // アプリ内で持っているテキストの選択位置を更新します。
-            SelOrigin = src_diff.DiffPos + src_diff.RemovedChars.Length;
-            SelCurrent = SelOrigin;
+            // テキストを変更して、変更情報をアンドゥ/リドゥのスタックにプッシュします。
+            PushUndoRedoStack(src_diff.DiffPos, src_diff.DiffPos + src_diff.InsertedCount, removed_string, dst_stack);
 
             // テキストの変更をIMEに伝えます。
             MyNotifyTextChanged(src_diff.DiffPos, src_diff.DiffPos + src_diff.InsertedCount, src_diff.RemovedChars.Length);
@@ -366,17 +362,17 @@ namespace MyEdit {
         }
 
         /*
-            テキストを変更して、変更情報をアンドゥのスタックにプッシュします。
+            テキストを変更して、変更情報をアンドゥ/リドゥのスタックにプッシュします。
         */
-        void PushUndoStack(int sel_start, int sel_end, string new_text) {
+        void PushUndoRedoStack(int sel_start, int sel_end, string new_text, Stack<TDiff> dst_stack) {
+            // 変更範囲にある改行文字の個数
+            int old_LF_cnt = GetLFCount(sel_start, sel_end);
+
             // 変更情報を作ります。
             TDiff diff = new TDiff(sel_start, sel_end - sel_start, new_text.Length);
 
             // 変更情報をアンドゥのスタックにプッシュします。
-            UndoStack.Push(diff);
-
-            // リドゥのスタックはクリアします。
-            RedoStack.Clear();
+            dst_stack.Push(diff);
 
             // 削除する文字列をコピーします。
             Chars.CopyTo(sel_start, diff.RemovedChars, 0, diff.RemovedChars.Length);
@@ -390,6 +386,15 @@ namespace MyEdit {
             // アプリ内で持っているテキストの選択位置を更新します。
             SelOrigin = sel_start + new_text.Length;
             SelCurrent  = SelOrigin;
+
+            // 新しく挿入した文字列に含まれる改行文字の個数
+            int new_LF_cnt = (from x in new_text where x == LF select x).Count();//   GetLFCount(sel_start, sel_start + new_text.Length);
+
+            // 文書の行数を更新します。
+            LineCount += new_LF_cnt - old_LF_cnt;
+
+            // 字句型を更新します。
+            UpdateTokenType(sel_start, sel_start + new_text.Length);
         }
 
         /*
@@ -623,15 +628,65 @@ namespace MyEdit {
 
                     // https://msdn.microsoft.com/en-us/windows/uwp/app-to-app/copy-and-paste
 
-                    // 選択範囲の文字列
-                    string text = new string( (from x in Chars.GetRange(SelStart, SelEnd - SelStart) select x.Chr).ToArray() );
-
-                    // LFをCRLFに変換した文字列
-                    string text_CRLF = text.Replace("\n", "\r\n");
-
                     DataPackage dataPackage = new DataPackage();
                     dataPackage.RequestedOperation = DataPackageOperation.Copy;
-                    dataPackage.SetText(text_CRLF);
+
+                    if ((Window.Current.CoreWindow.GetKeyState(VirtualKey.Shift) & CoreVirtualKeyStates.Down) != 0) {
+                        // Ctrl+Shift+Cの場合 ( HTMLテキストをクリップボードにコピーします。 )
+
+                        StringWriter sw = new StringWriter();
+
+                        sw.WriteLine("<code><br/>");
+
+                        for (int pos = SelStart; pos < SelEnd;) {
+                            // 字句の開始位置
+                            int start_pos = pos;
+
+                            // 字句型から文字色を得ます。
+                            Color text_color = ColorFromTokenType(Chars[pos].CharType);
+
+                            // 文字色が同じで改行でない文字を１つの字句とします。
+                            for (; pos < SelEnd && Chars[pos].Chr != '\n' && ColorFromTokenType(Chars[pos].CharType) == text_color; pos++);
+
+                            // HTMLエンコードしてから、空白は&nbsp;に変換します。
+                            string html_str = WebUtility.HtmlEncode(StringFromRange(start_pos, pos)).Replace(" ", "&nbsp;");
+
+                            if (text_color == Colors.Black) {
+                                // 文字色が黒の場合
+
+                                // HTMLにそのまま出力します。
+                                sw.Write("{0}", html_str);
+                            }
+                            else {
+                                // 文字色が黒以外の場合
+
+                                // SPANで文字色を指定して出力します。
+                                sw.Write("<span style=\"color:{0}\">{1}</span>", ColorStyleString(text_color), html_str);
+                            }
+
+                            if (pos < SelEnd && Chars[pos].Chr == '\n') {
+                                // 改行の場合
+
+                                sw.WriteLine("<br/>");
+                                pos++;
+                            }
+                        }
+                        sw.WriteLine("</code><br/>");
+
+                        dataPackage.SetText(sw.ToString());
+                    }
+                    else {
+                        // Ctrl+Cの場合 ( プレーンテキストをクリップボードにコピーします。 )
+
+                        // 選択範囲の文字列
+                        string text = new string((from x in Chars.GetRange(SelStart, SelEnd - SelStart) select x.Chr).ToArray());
+
+                        // LFをCRLFに変換した文字列
+                        string text_CRLF = text.Replace("\n", "\r\n");
+
+                        dataPackage.SetText(text_CRLF);
+                    }
+
                     Clipboard.SetContent(dataPackage);
                 }
                 break;
@@ -1029,6 +1084,15 @@ namespace MyEdit {
         }
 
         /*
+            次の行の先頭位置または文書の終わりを返します。
+        */
+        int GetNextLineTopOrEOT(int current_pos) {
+            int i = GetNextLineTop(current_pos);
+
+            return (i != -1 ? i : Chars.Count);
+        }
+
+        /*
             行の最終位置を返します。
             行の最終位置は改行文字の位置または文書の最後の位置です。
         */
@@ -1134,16 +1198,14 @@ namespace MyEdit {
             選択した範囲のテキストを別のテキストに置換します。
         */
         void ReplaceText(int sel_start, int sel_end, string new_text) {
-            int old_LF_cnt = GetLFCount(sel_start, sel_end);
+            // リドゥのスタックはクリアします。
+            RedoStack.Clear();
 
-            // テキストを変更して、変更情報をアンドゥのスタックにプッシュします。
-            PushUndoStack(sel_start, sel_end, new_text);
+            // テキストを変更して、変更情報をアンドゥ/リドゥのスタックにプッシュします。
+            PushUndoRedoStack(sel_start, sel_end, new_text, UndoStack);
 
             // テキストの変更をIMEに伝えます。
             MyNotifyTextChanged(sel_start, sel_end, new_text.Length);
-
-            int new_LF_cnt = GetLFCount(sel_start, sel_start + new_text.Length);
-            LineCount += new_LF_cnt - old_LF_cnt;
 
             if (!double.IsNaN(LineHeight)) {
                 double document_height = LineCount * LineHeight;
@@ -1182,12 +1244,16 @@ namespace MyEdit {
         // 下線
         public UnderlineType Underline;
 
+        // 字句の型
+        public ETokenType CharType;
+
         /*
             コンストラクタ
         */
         public TChar(char c) {
             Chr = c;
             Underline = UnderlineType.Undefined;
+            CharType = ETokenType.Undefined;
         }
     }
 
