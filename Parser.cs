@@ -551,6 +551,7 @@ namespace MyEdit {
         */
         Color ColorFromTokenType(ETokenType token_type) {
             switch (token_type) {
+            case ETokenType.Char_:
             case ETokenType.String_:
             case ETokenType.VerbatimString:
                 return Colors.Red;
