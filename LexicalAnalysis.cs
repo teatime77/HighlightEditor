@@ -2,6 +2,12 @@
 using System.Collections.Generic;
 using System;
 using Windows.UI;
+using System.IO;
+using System.Net;
+
+/*--------------------------------------------------------------------------------
+        字句解析
+--------------------------------------------------------------------------------*/
 
 namespace MyEdit {
     /*
@@ -22,17 +28,15 @@ namespace MyEdit {
         Error,          // エラー
     }
 
-    /*
-        字句解析
-    */
-    public class TParser {
+    partial class MyEditor {
+
         // キーワードの文字列の辞書
         public Dictionary<string, bool> KeywordMap;
 
         /*
-            コンストラクタ
+            字句解析の初期処理をします。
         */
-        public TParser() {
+        public void InitializeLexicalAnalysis() {
             // C#のキーワードのリスト
             // https://msdn.microsoft.com/en-us/library/x53a06bb.aspx
             string[] keyword_list = new string[] {
@@ -218,7 +222,7 @@ namespace MyEdit {
         /*
             字句解析をして各文字の字句型の配列を返します。
         */
-        public ETokenType[] Lex(string text, ETokenType prev_token_type) {
+        public ETokenType[] LexicalAnalysis(string text, ETokenType prev_token_type) {
             // 文字列の長さ
             int text_len = text.Length;
 
@@ -483,9 +487,6 @@ namespace MyEdit {
             // 各文字の字句型の配列を返します。
             return token_type_list;
         }
-    }
-
-    partial class MyEditor {
 
         /*
             字句型を更新します。
@@ -509,7 +510,7 @@ namespace MyEdit {
                 ETokenType last_token_type_before = (next_line_top == 0 ? ETokenType.Undefined : Chars[next_line_top - 1].CharType);
 
                 // 現在行の字句解析をして字句タイプのリストを得ます。
-                ETokenType[] token_type_list = Parser.Lex(lex_string, last_token_type);
+                ETokenType[] token_type_list = LexicalAnalysis(lex_string, last_token_type);
 
                 // 字句型をテキストにセットします。
                 for (int i = 0; i < token_type_list.Length; i++) {
@@ -545,6 +546,52 @@ namespace MyEdit {
                 line_top = next_line_top;
             }
         }
+
+        /*
+            指定した範囲をHTML文字列に変換して返します。
+        */
+        public string HTMLStringFromRange(int start_pos, int end_pos) {
+            StringWriter sw = new StringWriter();
+
+            sw.WriteLine("<pre><code>");
+
+            for (int pos = start_pos; pos < end_pos;) {
+                // 字句の開始位置
+                int token_start_pos = pos;
+
+                // 字句型から文字色を得ます。
+                Color text_color = ColorFromTokenType(Chars[pos].CharType);
+
+                // 文字色が同じで改行でない文字を１つの字句とします。
+                for (; pos < end_pos && Chars[pos].Chr != '\n' && ColorFromTokenType(Chars[pos].CharType) == text_color; pos++) ;
+
+                // HTMLエンコードしてから、空白は&nbsp;に変換します。
+                string html_str = WebUtility.HtmlEncode(StringFromRange(token_start_pos, pos));
+
+                if (text_color == Colors.Black) {
+                    // 文字色が黒の場合
+
+                    // HTMLにそのまま出力します。
+                    sw.Write("{0}", html_str);
+                }
+                else {
+                    // 文字色が黒以外の場合
+
+                    // SPANで文字色を指定して出力します。
+                    sw.Write("<span style=\"color:{0}\">{1}</span>", ColorStyleString(text_color), html_str);
+                }
+
+                for (; pos < end_pos && Chars[pos].Chr == '\n'; pos++) {
+                    // 改行の場合
+
+                    sw.Write("\r\n");
+                }
+            }
+            sw.WriteLine("</code></pre>");
+
+            return sw.ToString();
+        }
+
 
         /*
             字句型から色を得ます。

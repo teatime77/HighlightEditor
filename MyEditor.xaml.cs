@@ -18,7 +18,6 @@ using Windows.System;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.UI.Input;
 using System.Collections;
-using System.Net;
 
 
 // The User Control item template is documented at http://go.microsoft.com/fwlink/?LinkId=234236
@@ -86,9 +85,6 @@ namespace MyEdit {
         Stack<TDiff> UndoStack = new Stack<TDiff>();
         Stack<TDiff> RedoStack = new Stack<TDiff>();
 
-        // 字句解析
-        TParser Parser = new TParser();
-
         /*
             テキスト選択の開始位置
         */
@@ -117,6 +113,9 @@ namespace MyEdit {
             // フォントを変更する場合は以下のコメントをはずしてください。
             //TextFormat.FontSize = 48;
             TextFormat.FontFamily = "ＭＳ ゴシック";
+
+            // 字句解析の初期処理をします。
+            InitializeLexicalAnalysis();
         }
 
         /*
@@ -631,49 +630,14 @@ namespace MyEdit {
                     DataPackage dataPackage = new DataPackage();
                     dataPackage.RequestedOperation = DataPackageOperation.Copy;
 
+                    // クリップボードにコピーする文字列
+                    string clipboard_str;
+
                     if ((Window.Current.CoreWindow.GetKeyState(VirtualKey.Shift) & CoreVirtualKeyStates.Down) != 0) {
                         // Ctrl+Shift+Cの場合 ( HTMLテキストをクリップボードにコピーします。 )
 
-                        StringWriter sw = new StringWriter();
-
-                        sw.WriteLine("<code><br/>");
-
-                        for (int pos = SelStart; pos < SelEnd;) {
-                            // 字句の開始位置
-                            int start_pos = pos;
-
-                            // 字句型から文字色を得ます。
-                            Color text_color = ColorFromTokenType(Chars[pos].CharType);
-
-                            // 文字色が同じで改行でない文字を１つの字句とします。
-                            for (; pos < SelEnd && Chars[pos].Chr != '\n' && ColorFromTokenType(Chars[pos].CharType) == text_color; pos++);
-
-                            // HTMLエンコードしてから、空白は&nbsp;に変換します。
-                            string html_str = WebUtility.HtmlEncode(StringFromRange(start_pos, pos)).Replace(" ", "&nbsp;");
-
-                            if (text_color == Colors.Black) {
-                                // 文字色が黒の場合
-
-                                // HTMLにそのまま出力します。
-                                sw.Write("{0}", html_str);
-                            }
-                            else {
-                                // 文字色が黒以外の場合
-
-                                // SPANで文字色を指定して出力します。
-                                sw.Write("<span style=\"color:{0}\">{1}</span>", ColorStyleString(text_color), html_str);
-                            }
-
-                            if (pos < SelEnd && Chars[pos].Chr == '\n') {
-                                // 改行の場合
-
-                                sw.WriteLine("<br/>");
-                                pos++;
-                            }
-                        }
-                        sw.WriteLine("</code><br/>");
-
-                        dataPackage.SetText(sw.ToString());
+                        // 選択範囲からHTML文字列を作ります。
+                        clipboard_str = HTMLStringFromRange(SelStart, SelEnd);
                     }
                     else {
                         // Ctrl+Cの場合 ( プレーンテキストをクリップボードにコピーします。 )
@@ -682,11 +646,11 @@ namespace MyEdit {
                         string text = new string((from x in Chars.GetRange(SelStart, SelEnd - SelStart) select x.Chr).ToArray());
 
                         // LFをCRLFに変換した文字列
-                        string text_CRLF = text.Replace("\n", "\r\n");
+                        clipboard_str = text.Replace("\n", "\r\n");
 
-                        dataPackage.SetText(text_CRLF);
                     }
 
+                    dataPackage.SetText(clipboard_str);
                     Clipboard.SetContent(dataPackage);
                 }
                 break;
